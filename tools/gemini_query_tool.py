@@ -45,7 +45,7 @@ def run(tool_input):
             if response.candidates[0].content.parts:
                 return {
                     'status': 'success',
-                    'response': response.candidates[0].content.parts[0].text
+                    'markdown': response.candidates[0].content.parts[0].text
                 }
             else:
                 return {
