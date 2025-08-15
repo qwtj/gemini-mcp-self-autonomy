@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Web Client</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* A simple animation for the response box */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-2xl bg-gray-800 rounded-lg shadow-xl p-8 text-center">
+        
+        <!-- Header -->
+        <h1 class="text-4xl font-bold text-cyan-400 mb-2">MCP Web Client</h1>
+        <p class="text-gray-400 mb-6">Enter a multi-step command (e.g., "write a python hello world script and save it to /tmp/hello.py")</p>
+
+        <!-- Input and Action Button -->
+        <div class="flex w-full max-w-lg mx-auto space-x-2 mb-8">
+            <input type="text" id="commandInput" class="bg-gray-700 border border-gray-600 text-white text-lg rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full p-2.5" placeholder="Enter your command..." value="write a python hello world script and save it to /tmp/hello.py">
+            <button id="sendRequestBtn" class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 px-8 rounded-lg transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-cyan-300">
+                Run
+            </button>
+        </div>
+
+        <!-- Response Area -->
+        <div id="responseContainer" class="mt-8 p-6 bg-gray-700 rounded-lg text-left min-h-[100px] hidden">
+            <h2 id="responseTitle" class="text-xl font-semibold mb-2 text-gray-300">Execution Log:</h2>
+            <pre id="responseText" class="text-green-400 whitespace-pre-wrap break-words"></pre>
+        </div>
+
+    </div>
+
+    <script>
+        // --- DOM Element Selection ---
+        const sendButton = document.getElementById('sendRequestBtn');
+        const commandInput = document.getElementById('commandInput');
+        const responseContainer = document.getElementById('responseContainer');
+        const responseText = document.getElementById('responseText');
+        const responseTitle = document.getElementById('responseTitle');
+
+        const SERVER_URL = 'http://127.0.0.1:5000/mcp';
+
+        // --- Event Listener ---
+        sendButton.addEventListener('click', handleToolChainRequest);
+
+        /**
+         * A helper function to make tool requests to the local server.
+         */
+        async function callLocalTool(toolName, input = {}) {
+            const payload = { model: 'web-client-agent-v1', context: { tool_request: { name: toolName, input: input } } };
+            const response = await fetch(SERVER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const result = await response.json();
+            if (!response.ok || result.status !== 'success') {
+                const errorMessage = result.tool_response?.output?.message || result.tool_response?.output || `Local server error! Status: ${response.status}`;
+                throw new Error(errorMessage);
+            }
+            return result;
+        }
+
+        /**
+         * Uses the Gemini API to generate a multi-step execution plan based on tool metadata.
+         */
+        async function generateExecutionPlan(command, availableTools) {
+            const apiKey = ""; // Leave blank
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            
+            const prompt = `
+                You are an expert planner that creates a sequence of tool calls to fulfill a user's request.
+                Based on the user's command and the list of available tools with their descriptions and schemas, create a JSON array of tool calls.
+                Each object in the array must have "tool_name" and "input" keys.
+                The "input" must be a valid JSON object that conforms to the tool's "input_schema".
+                For the input of a step that depends on the output of a previous step, use the placeholder string "%%PREVIOUS_STEP_OUTPUT%%".
+
+                User Command: "${command}"
+
+                Available Tools:
+                ${JSON.stringify(availableTools, null, 2)}
+            `;
+            
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { responseMimeType: "application/json" }
+            };
+            const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error(`Gemini API error while generating plan! Status: ${response.status}`);
+            const result = await response.json();
+            return JSON.parse(result.candidates[0].content.parts[0].text);
+        }
+
+        /**
+         * Uses the Gemini API to generate the full Python code for a new tool.
+         */
+        async function generateToolCodeWithGemini(command) {
+            const apiKey = ""; // Leave blank
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            
+            const prompt = `
+                You are an expert Python programmer who creates tool files. Based on the user's request, create the full Python code for a new tool.
+                
+                **RULES:**
+                1. The code MUST include a 'get_meta()' function and a 'run(tool_input)' function.
+                2. The tool name MUST be a valid Python identifier (snake_case).
+                3. The 'run' function MUST be self-contained. It CANNOT call or import other tools from the tools directory. All logic must be within the function itself.
+                4. Your response MUST be a single JSON object with two keys: "tool_name" and "tool_code".
+
+                User Request: "${command}"
+
+                Example of a valid response for the request "create a tool that says hello":
+                {
+                  "tool_name": "hello_tool",
+                  "tool_code": "# tools/hello_tool.py\\ndef get_meta():\\n    return {\\n        'name': 'hello_tool',\\n        'description': 'A simple tool that says hello.',\\n        'input_schema': { 'type': 'object', 'properties': {}, 'required': [] }\\n    }\\n\\ndef run(tool_input):\\n    return { 'status': 'success', 'message': 'Hello from the new tool!' }"
+                }
+            `;
+            
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { responseMimeType: "application/json" }
+            };
+            const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error(`Gemini API error while generating code! Status: ${response.status}`);
+            const result = await response.json();
+            return JSON.parse(result.candidates[0].content.parts[0].text);
+        }
+
+        /**
+         * Main handler for the tool execution chain.
+         */
+        async function handleToolChainRequest() {
+            sendButton.disabled = true;
+            commandInput.disabled = true;
+            responseContainer.classList.remove('hidden');
+            responseText.textContent = '';
+            
+            // Reset text color to green at the start of every run.
+            responseText.classList.remove('text-red-400');
+            responseText.classList.add('text-green-400');
+
+            const userCommand = commandInput.value.trim();
+            if (!userCommand) {
+                 alert("Please enter a command.");
+                 return;
+            }
+
+            let log = [];
+            
+            try {
+                // Step 1: Discover Tools
+                updateLog("Step 1: Discovering Tools...");
+                const metaResult = await callLocalTool('meta_tool_inspector');
+                const availableTools = metaResult.tool_response.output.available_tools;
+                updateLog(`Found ${availableTools.length} tools.`);
+
+                // Step 2: Generate Execution Plan
+                updateLog("\nStep 2: AI is generating an execution plan...");
+                const plan = await generateExecutionPlan(userCommand, availableTools);
+                updateLog(`Plan generated with ${plan.length} steps.`);
+                console.log("Execution Plan:", plan);
+
+                // Step 3: Execute the plan
+                let previousStepOutput = null;
+                for (let i = 0; i < plan.length; i++) {
+                    const step = plan[i];
+                    updateLog(`\nStep ${3 + i}: Executing tool "${step.tool_name}"...`);
+
+                    // Substitute placeholder with the output from the previous step
+                    if (step.input && typeof step.input === 'object') {
+                        for (const key in step.input) {
+                            if (step.input[key] === "%%PREVIOUS_STEP_OUTPUT%%") {
+                                step.input[key] = previousStepOutput;
+                            }
+                        }
+                    }
+                    
+                    let result;
+                    // If the plan step is to create a tool, we need to generate the code first
+                    if (step.tool_name === 'tool_creator') {
+                        updateLog('  - Generating tool code with AI...');
+                        const generatedTool = await generateToolCodeWithGemini(userCommand);
+                        updateLog(`  - AI generated code for new tool: "${generatedTool.tool_name}"`);
+                        result = await callLocalTool('tool_creator', generatedTool);
+                    } else {
+                        result = await callLocalTool(step.tool_name, step.input);
+                    }
+                    
+                    // Intelligently extract the most relevant part of the output for the next step.
+                    const toolOutput = result.tool_response.output;
+                    if (typeof toolOutput === 'object' && toolOutput !== null) {
+                        // Prioritize keys that likely hold the main content for chaining
+                        if (toolOutput.generated_code) {
+                            previousStepOutput = toolOutput.generated_code;
+                        } else if (toolOutput.content) {
+                            previousStepOutput = toolOutput.content;
+                        } else if (toolOutput.output) {
+                            previousStepOutput = toolOutput.output;
+                        } else {
+                            // Fallback for logging and non-chainable outputs
+                            previousStepOutput = toolOutput.message || JSON.stringify(toolOutput);
+                        }
+                    } else {
+                        previousStepOutput = toolOutput; // It's not an object.
+                    }
+                    
+                    const logMessage = result.tool_response.output.message || JSON.stringify(result.tool_response.output);
+                    updateLog(`  - Success: ${logMessage}`);
+                }
+
+                updateLog("\nExecution Complete!");
+
+            } catch (error) {
+                console.error('Error during tool chain execution:', error);
+                updateLog(`\n--- ERROR ---\n${error.message}`);
+                responseText.classList.remove('text-green-400');
+                responseText.classList.add('text-red-400');
+            } finally {
+                sendButton.disabled = false;
+                commandInput.disabled = false;
+                sendButton.textContent = 'Run';
+            }
+
+            function updateLog(message) {
+                console.log(message);
+                log.push(message);
+                responseText.textContent = log.join('\n');
+                responseContainer.classList.remove('hidden');
+            }
+        }
+    </script>
+
+</body>
+</html>
+
