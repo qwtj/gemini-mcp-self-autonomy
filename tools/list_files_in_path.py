@@ -34,7 +34,7 @@ def run(tool_input):
             return {"status": "error", "message": f"Path is not a directory: '{expanded_path}'"}
 
         files_and_dirs = os.listdir(expanded_path)
-        return {"status": "success", "path": expanded_path, "contents": files_and_dirs}
+        return {"status": "success", "path": expanded_path, "array": files_and_dirs}
 
     except PermissionError:
         return {"status": "error", "message": f"Permission denied to access path: '{expanded_path}'"}
