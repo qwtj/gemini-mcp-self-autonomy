@@ -1,9 +1,9 @@
 # MCP Web Client + Dynamic Tool Server (Gemini MCP Self Autonomy)
 
-** The index.html is meant to be run within gemini.google.com for no config needed or api keys **
-** The tools that use gemini all depend on API keys specifically the env var $GOOGLE_API_KEY **
-** You can leverage my other repo ask and build a tool for it or look later I will make one **
-** This app can built its own tools but mileage varies on your ability to prompt **
+**The index.html is meant to be run within gemini.google.com for no config needed or api keys**
+**The tools that use gemini all depend on API keys specifically the env var $GOOGLE_API_KEY**
+**You can leverage my other repo ask and build a tool for it or look later I will make one**
+**This app can built its own tools but mileage varies on your ability to prompt**
 
 A tiny end-to-end demo that lets you:
 - Discover available tools
