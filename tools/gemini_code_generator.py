@@ -27,7 +27,15 @@ def run(tool_input):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.0-flash') # Using gemini-pro for general code generation
 
-        prompt = f'Never use markdown code fencing.  Never wrap code in \'\'\'.  Strictly follow these directions\n---\n{tool_input.get('prompt')}'
+        user_prompt = tool_input.get('prompt') or ''
+        prompt = (
+            "Never use markdown code fencing of any kind (```, ~~~, etc). "
+            "Never wrap code in triple quotes ('''). "
+            "Strictly follow these directions.\n---\n"
+            f"{user_prompt}"
+        )
+
+ 
         if not prompt:
             return {'status': 'error', 'message': 'Prompt is required for code generation.'}
 
